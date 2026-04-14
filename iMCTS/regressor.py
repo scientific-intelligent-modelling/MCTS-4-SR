@@ -39,7 +39,8 @@ class Regressor:
         max_expressions: float = 2e6,
         verbose: bool = False,
         reward_func: Optional[Callable] = None,
-        optimization_method: str = 'LN_NELDERMEAD'
+        optimization_method: str = 'LN_NELDERMEAD',
+        progress_callback: Optional[Callable[..., None]] = None,
     ):
         """
         Symbolic Regression Regressor with MCTS optimization
@@ -57,6 +58,7 @@ class Regressor:
         self.y_train = y_train
         self.verbose = verbose
         self.reward_func = reward_func
+        self.progress_callback = progress_callback
         
         # Initialize operations and context
         self.ops = self._init_operations(ops, x_train.shape[0])
@@ -100,6 +102,7 @@ class Regressor:
             self.start_time = time.time()
             self.find_best(mcts)
             exp_str, reward = mcts.exp_queue.best()
+            self._emit_progress(mcts, exp_str, reward)
             
             return (
                 simplify_expression(exp_str, self.verbose),
@@ -118,6 +121,9 @@ class Regressor:
         while mcts.count_num < self.max_expressions:
             search_num += 1
             best_reward = mcts.search(self.exp_tree)
+            if not mcts.exp_queue.is_empty():
+                best_expr, queue_best_reward = mcts.exp_queue.best()
+                self._emit_progress(mcts, best_expr, queue_best_reward)
 
             now = time.time()
             # Time-based periodic status report (every ~10s)
@@ -137,6 +143,24 @@ class Regressor:
                 if self.verbose:
                     self.print_status(mcts)
                 break
+
+    def _emit_progress(self, mcts: MCTS, best_expr: str, best_reward: Optional[float]) -> None:
+        if self.progress_callback is None:
+            return
+        if not isinstance(best_expr, str) or not best_expr.strip():
+            return
+        try:
+            simplified = simplify_expression(best_expr, self.verbose)
+        except Exception:
+            simplified = best_expr
+        try:
+            self.progress_callback(
+                equation=simplified,
+                score=float(best_reward) if isinstance(best_reward, (int, float)) else None,
+                evaluations=int(mcts.count_num),
+            )
+        except Exception:
+            pass
 
     def predict(self, x: np.ndarray, vec_exp_str) -> np.ndarray:
         """Make predictions using the given expression"""
